@@ -5,6 +5,8 @@
  * No database, no caching beyond the process — every call hits the live API.
  */
 
+import { parseAndValidateSkillId } from "./tools/validate.js";
+
 export const DEFAULT_API_BASE = "https://skills.devfellowship.com";
 
 const API_BASE = (process.env.SKILLS_API_URL ?? DEFAULT_API_BASE).replace(/\/+$/, "");
@@ -89,19 +91,40 @@ export interface SkillDetail {
   [key: string]: unknown;
 }
 
-/** GET /api/v1/skills — full public list, optionally filtered by kind/sorted. */
+/**
+ * GET /api/v1/skills — public list, optionally filtered by kind/sorted.
+ *
+ * `limit` is sent to the API (in case it honors a server-side cap) AND enforced
+ * client-side before serializing: an unbounded list would blow up the calling
+ * LLM's context. The response is truncated to `limit` and annotated with
+ * `returnedCount`/`totalCount` so the caller knows N of M are shown.
+ */
 export async function listSkills(opts?: {
   kind?: SkillKind;
   sort?: string;
+  limit?: number;
 }): Promise<ListResponse> {
   const params = new URLSearchParams();
   if (opts?.kind && opts.kind !== "all") params.set("kind", opts.kind);
   if (opts?.sort) params.set("sort", opts.sort);
+  if (opts?.limit != null) params.set("limit", String(opts.limit));
   const qs = params.toString();
-  return request<ListResponse>(`/api/v1/skills${qs ? `?${qs}` : ""}`);
+  const data = await request<ListResponse>(`/api/v1/skills${qs ? `?${qs}` : ""}`);
+  if (opts?.limit != null && Array.isArray(data.skills) && data.skills.length > opts.limit) {
+    const totalCount = data.skills.length;
+    return { ...data, skills: data.skills.slice(0, opts.limit), totalCount, truncated: true };
+  }
+  return data;
 }
 
-/** GET /api/v1/skills/search?q=&semantic= — hybrid semantic + FTS search. */
+/**
+ * GET /api/v1/skills/search?q=&semantic= — hybrid semantic + FTS search.
+ *
+ * As with `listSkills`, `limit` is forwarded to the API AND enforced client-side
+ * before returning: if the registry ignores or differently-caps the param, an
+ * unbounded result set would blow up the calling LLM's context. The response is
+ * truncated to `limit` and annotated with `totalCount`/`truncated`.
+ */
 export async function searchSkills(
   query: string,
   opts?: { limit?: number; kind?: SkillKind; semantic?: boolean },
@@ -110,7 +133,12 @@ export async function searchSkills(
   if (opts?.limit != null) params.set("limit", String(opts.limit));
   if (opts?.kind && opts.kind !== "all") params.set("kind", opts.kind);
   if (opts?.semantic != null) params.set("semantic", String(opts.semantic));
-  return request<SearchResponse>(`/api/v1/skills/search?${params.toString()}`);
+  const data = await request<SearchResponse>(`/api/v1/skills/search?${params.toString()}`);
+  if (opts?.limit != null && Array.isArray(data.skills) && data.skills.length > opts.limit) {
+    const totalCount = data.skills.length;
+    return { ...data, skills: data.skills.slice(0, opts.limit), totalCount, truncated: true };
+  }
+  return data;
 }
 
 /**
@@ -118,14 +146,19 @@ export async function searchSkills(
  * hash and audit metadata. `id` is "owner/repo/slug".
  */
 export async function getSkill(id: string): Promise<SkillDetail> {
-  const parts = id.split("/").filter(Boolean);
-  if (parts.length !== 3) {
-    throw new SkillsApiError(
-      `Invalid skill id "${id}". Expected "owner/repo/slug" (e.g. "devfellowship/skills/dfl-stack").`,
-      400,
-      id,
-    );
+  // Same charset validation as install. Here segments are encodeURIComponent'd
+  // into a URL path (so metachars are inert), but we still validate for a clear
+  // client error and to stay safe if this is ever refactored to a shell string.
+  let owner: string;
+  let repo: string;
+  let slug: string | undefined;
+  try {
+    ({ owner, repo, slug } = parseAndValidateSkillId(id, { requireSlug: true }));
+  } catch (err) {
+    throw new SkillsApiError(err instanceof Error ? err.message : String(err), 400, id);
   }
-  const [owner, repo, slug] = parts.map((p) => encodeURIComponent(p));
-  return request<SkillDetail>(`/api/v1/skills/${owner}/${repo}/${slug}`);
+  const [encOwner, encRepo, encSlug] = [owner, repo, slug as string].map((p) =>
+    encodeURIComponent(p),
+  );
+  return request<SkillDetail>(`/api/v1/skills/${encOwner}/${encRepo}/${encSlug}`);
 }

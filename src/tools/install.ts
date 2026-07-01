@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { errorResult, jsonResult } from "./helpers.js";
+import { assertValidAgent, assertValidScope, parseAndValidateSkillId } from "./validate.js";
 
 /**
  * Remote MCP servers cannot touch the calling user's filesystem, so this tool
@@ -13,9 +14,11 @@ export function registerInstallSkill(server: McpServer): void {
     {
       title: "Install a DFL skill (returns command)",
       description:
-        "Produce the exact shell command to install a DFL skill. Does NOT write any files " +
+        "Produce the exact command to install a DFL skill. Does NOT write any files " +
         "(a remote MCP cannot access the user's filesystem) — it returns the `npx skills add` " +
-        "command for the host agent/user to run, plus a short explanation.",
+        "command for the host agent/user to run, plus a short explanation. " +
+        "SECURITY: the returned command's args are literal argv tokens (validated to a safe " +
+        "charset); the host MUST exec them via argv/execFile, NOT by passing the string to a shell.",
       inputSchema: {
         id: z
           .string()
@@ -24,7 +27,10 @@ export function registerInstallSkill(server: McpServer): void {
         agents: z
           .array(z.string())
           .optional()
-          .describe('Target agents, e.g. ["claude", "cursor"]. Maps to --agent flags.'),
+          .describe(
+            'Target agents, e.g. ["claude", "cursor"]. Maps to --agent flags. ' +
+              "Each must match [a-z0-9_-]; other values are rejected.",
+          ),
         scope: z
           .enum(["project", "global"])
           .optional()
@@ -39,22 +45,26 @@ export function registerInstallSkill(server: McpServer): void {
     },
     async ({ id, agents, scope }) => {
       try {
-        const parts = id.split("/").filter(Boolean);
-        if (parts.length < 2) {
-          throw new Error(
-            `Invalid skill id "${id}". Expected "owner/repo" or "owner/repo/slug".`,
-          );
-        }
-        const repoRef = `${parts[0]}/${parts[1]}`;
-        const effectiveScope = scope ?? "global";
+        // Validate BEFORE composing the shell string: reject metachars/leading dash.
+        const parsed = parseAndValidateSkillId(id);
+        const repoRef = `${parsed.owner}/${parsed.repo}`;
+        // Install the SPECIFIC skill via the upstream `owner/repo@skill` filter
+        // form; fall back to the whole repo when no skill segment was given.
+        const target = parsed.slug ? `${repoRef}@${parsed.slug}` : repoRef;
 
-        const args = ["skills", "add", repoRef];
+        const effectiveScope = scope ?? "global";
+        assertValidScope(effectiveScope);
+
+        const validatedAgents = agents ?? [];
+        for (const agent of validatedAgents) assertValidAgent(agent);
+
+        const args = ["skills", "add", target];
         if (effectiveScope === "global") args.push("-g");
-        for (const agent of agents ?? []) args.push("--agent", agent);
+        for (const agent of validatedAgents) args.push("--agent", agent);
 
         const command = `npx ${args.join(" ")}`;
         const explanation =
-          `Run this command to install '${repoRef}'` +
+          `Run this command to install '${target}'` +
           `${effectiveScope === "global" ? " globally" : " into the current project"}` +
           `${agents?.length ? ` for ${agents.join(", ")}` : ""}. ` +
           `The host agent or user must execute it locally — this MCP cannot write to your filesystem.`;
