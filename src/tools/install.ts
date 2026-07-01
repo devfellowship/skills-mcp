@@ -48,6 +48,9 @@ export function registerInstallSkill(server: McpServer): void {
         // Validate BEFORE composing the shell string: reject metachars/leading dash.
         const parsed = parseAndValidateSkillId(id);
         const repoRef = `${parsed.owner}/${parsed.repo}`;
+        // Install the SPECIFIC skill via the upstream `owner/repo@skill` filter
+        // form; fall back to the whole repo when no skill segment was given.
+        const target = parsed.slug ? `${repoRef}@${parsed.slug}` : repoRef;
 
         const effectiveScope = scope ?? "global";
         assertValidScope(effectiveScope);
@@ -55,13 +58,13 @@ export function registerInstallSkill(server: McpServer): void {
         const validatedAgents = agents ?? [];
         for (const agent of validatedAgents) assertValidAgent(agent);
 
-        const args = ["skills", "add", repoRef];
+        const args = ["skills", "add", target];
         if (effectiveScope === "global") args.push("-g");
         for (const agent of validatedAgents) args.push("--agent", agent);
 
         const command = `npx ${args.join(" ")}`;
         const explanation =
-          `Run this command to install '${repoRef}'` +
+          `Run this command to install '${target}'` +
           `${effectiveScope === "global" ? " globally" : " into the current project"}` +
           `${agents?.length ? ` for ${agents.join(", ")}` : ""}. ` +
           `The host agent or user must execute it locally — this MCP cannot write to your filesystem.`;

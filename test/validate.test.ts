@@ -62,6 +62,33 @@ test("assertValidAgent rejects metachars, accepts clean names", () => {
   assert.throws(() => assertValidAgent("Claude"));
 });
 
+test("assertValidAgent rejects a leading-dash flag-injection value", () => {
+  assert.throws(() => assertValidAgent("-rf"), /must not start with "-"/);
+  assert.throws(() => assertValidAgent("-g"), /must not start with "-"/);
+});
+
+test("assertValidAgent rejects an over-length value", () => {
+  assert.throws(() => assertValidAgent("a".repeat(101)), /exceeds 100/);
+});
+
+test("parseAndValidateSkillId rejects a `..` traversal segment", () => {
+  assert.throws(() => parseAndValidateSkillId("devfellowship/repo/.."), /not allowed/);
+  assert.throws(() => parseAndValidateSkillId("devfellowship/.."), /not allowed/);
+  assert.throws(() => parseAndValidateSkillId("devfellowship/repo/."), /not allowed/);
+});
+
+test("parseAndValidateSkillId rejects leading/trailing-dot segments", () => {
+  assert.throws(() => parseAndValidateSkillId("devfellowship/repo/.hidden"), /start or end with/);
+  assert.throws(() => parseAndValidateSkillId("devfellowship/repo/trailing."), /start or end with/);
+});
+
+test("parseAndValidateSkillId rejects an over-length segment", () => {
+  assert.throws(
+    () => parseAndValidateSkillId(`devfellowship/skills/${"a".repeat(101)}`),
+    /exceeds 100/,
+  );
+});
+
 test("assertValidScope enforces the allowlist", () => {
   assert.doesNotThrow(() => assertValidScope("project"));
   assert.doesNotThrow(() => assertValidScope("global"));
@@ -91,5 +118,25 @@ test("install_skill tool accepts a valid id + agents and builds a safe command",
     scope: "global",
   });
   assert.notEqual(res.isError, true);
-  assert.equal(res.structuredContent?.["command"], "npx skills add devfellowship/skills -g --agent claude --agent cursor");
+  assert.equal(
+    res.structuredContent?.["command"],
+    "npx skills add devfellowship/skills@dfl-stack -g --agent claude --agent cursor",
+  );
+});
+
+test("install_skill command carries the specific skill via owner/repo@skill", async () => {
+  const install = captureInstallTool();
+  const res = await install({ id: "devfellowship/skills/dfl-code-style", scope: "project" });
+  assert.notEqual(res.isError, true);
+  assert.equal(
+    res.structuredContent?.["command"],
+    "npx skills add devfellowship/skills@dfl-code-style",
+  );
+});
+
+test("install_skill falls back to the whole repo when no skill segment is given", async () => {
+  const install = captureInstallTool();
+  const res = await install({ id: "devfellowship/skills", scope: "project" });
+  assert.notEqual(res.isError, true);
+  assert.equal(res.structuredContent?.["command"], "npx skills add devfellowship/skills");
 });

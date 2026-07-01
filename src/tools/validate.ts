@@ -20,11 +20,17 @@ const SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
 /** An agent name passed to `--agent`. */
 const AGENT_RE = /^[a-z0-9_-]+$/;
 
+/** Upper bound on any single id segment or agent name. */
+const MAX_LEN = 100;
+
 /** Allowed install scopes. */
 export const ALLOWED_SCOPES = ["project", "global"] as const;
 export type Scope = (typeof ALLOWED_SCOPES)[number];
 
 function assertSegment(segment: string, label: string): void {
+  if (segment.length > MAX_LEN) {
+    throw new Error(`Invalid ${label} "${segment}": exceeds ${MAX_LEN} characters.`);
+  }
   if (!SEGMENT_RE.test(segment)) {
     throw new Error(
       `Invalid ${label} "${segment}". Only letters, digits, "." "_" "-" are allowed.`,
@@ -32,6 +38,14 @@ function assertSegment(segment: string, label: string): void {
   }
   if (segment.startsWith("-")) {
     throw new Error(`Invalid ${label} "${segment}": must not start with "-".`);
+  }
+  // The charset above admits "." and ".." (path traversal) and dotfiles; reject
+  // any "." only, ".." only, or leading/trailing-dot segment explicitly.
+  if (segment === "." || segment === "..") {
+    throw new Error(`Invalid ${label} "${segment}": path segments "." and ".." are not allowed.`);
+  }
+  if (segment.startsWith(".") || segment.endsWith(".")) {
+    throw new Error(`Invalid ${label} "${segment}": must not start or end with ".".`);
   }
 }
 
@@ -57,10 +71,17 @@ export function parseAndValidateSkillId(
 
 /** Validate an `--agent` value; throws on anything outside the safe charset. */
 export function assertValidAgent(agent: string): void {
+  if (agent.length > MAX_LEN) {
+    throw new Error(`Invalid agent "${agent}": exceeds ${MAX_LEN} characters.`);
+  }
   if (!AGENT_RE.test(agent)) {
     throw new Error(
       `Invalid agent "${agent}". Only lowercase letters, digits, "_" and "-" are allowed.`,
     );
+  }
+  // A leading dash would reach `npx skills add` as a flag (e.g. `--agent -rf`).
+  if (agent.startsWith("-")) {
+    throw new Error(`Invalid agent "${agent}": must not start with "-".`);
   }
 }
 
