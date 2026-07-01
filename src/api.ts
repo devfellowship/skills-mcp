@@ -5,6 +5,8 @@
  * No database, no caching beyond the process — every call hits the live API.
  */
 
+import { parseAndValidateSkillId } from "./tools/validate.js";
+
 export const DEFAULT_API_BASE = "https://skills.devfellowship.com";
 
 const API_BASE = (process.env.SKILLS_API_URL ?? DEFAULT_API_BASE).replace(/\/+$/, "");
@@ -118,14 +120,19 @@ export async function searchSkills(
  * hash and audit metadata. `id` is "owner/repo/slug".
  */
 export async function getSkill(id: string): Promise<SkillDetail> {
-  const parts = id.split("/").filter(Boolean);
-  if (parts.length !== 3) {
-    throw new SkillsApiError(
-      `Invalid skill id "${id}". Expected "owner/repo/slug" (e.g. "devfellowship/skills/dfl-stack").`,
-      400,
-      id,
-    );
+  // Same charset validation as install. Here segments are encodeURIComponent'd
+  // into a URL path (so metachars are inert), but we still validate for a clear
+  // client error and to stay safe if this is ever refactored to a shell string.
+  let owner: string;
+  let repo: string;
+  let slug: string | undefined;
+  try {
+    ({ owner, repo, slug } = parseAndValidateSkillId(id, { requireSlug: true }));
+  } catch (err) {
+    throw new SkillsApiError(err instanceof Error ? err.message : String(err), 400, id);
   }
-  const [owner, repo, slug] = parts.map((p) => encodeURIComponent(p));
-  return request<SkillDetail>(`/api/v1/skills/${owner}/${repo}/${slug}`);
+  const [encOwner, encRepo, encSlug] = [owner, repo, slug as string].map((p) =>
+    encodeURIComponent(p),
+  );
+  return request<SkillDetail>(`/api/v1/skills/${encOwner}/${encRepo}/${encSlug}`);
 }
