@@ -117,7 +117,14 @@ export async function listSkills(opts?: {
   return data;
 }
 
-/** GET /api/v1/skills/search?q=&semantic= — hybrid semantic + FTS search. */
+/**
+ * GET /api/v1/skills/search?q=&semantic= — hybrid semantic + FTS search.
+ *
+ * As with `listSkills`, `limit` is forwarded to the API AND enforced client-side
+ * before returning: if the registry ignores or differently-caps the param, an
+ * unbounded result set would blow up the calling LLM's context. The response is
+ * truncated to `limit` and annotated with `totalCount`/`truncated`.
+ */
 export async function searchSkills(
   query: string,
   opts?: { limit?: number; kind?: SkillKind; semantic?: boolean },
@@ -126,7 +133,12 @@ export async function searchSkills(
   if (opts?.limit != null) params.set("limit", String(opts.limit));
   if (opts?.kind && opts.kind !== "all") params.set("kind", opts.kind);
   if (opts?.semantic != null) params.set("semantic", String(opts.semantic));
-  return request<SearchResponse>(`/api/v1/skills/search?${params.toString()}`);
+  const data = await request<SearchResponse>(`/api/v1/skills/search?${params.toString()}`);
+  if (opts?.limit != null && Array.isArray(data.skills) && data.skills.length > opts.limit) {
+    const totalCount = data.skills.length;
+    return { ...data, skills: data.skills.slice(0, opts.limit), totalCount, truncated: true };
+  }
+  return data;
 }
 
 /**

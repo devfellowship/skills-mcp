@@ -107,3 +107,16 @@ test("search_skills honors an explicit limit up to the max", async () => {
   assert.equal(res.structuredContent?.["limit"], SEARCH_MAX_LIMIT);
   assert.match(urls[0]!, new RegExp(`limit=${SEARCH_MAX_LIMIT}`));
 });
+
+test("search_skills slices to limit and flags truncation when the registry over-returns", async () => {
+  stubFetch(500);
+  const search = captureTool(registerSearchSkills as (s: unknown) => void);
+  const res = await search({ query: "test", limit: 5 });
+  assert.notEqual(res.isError, true);
+  const skills = res.structuredContent?.["skills"] as unknown[];
+  assert.equal(skills.length, 5);
+  assert.equal(res.structuredContent?.["count"], 5);
+  assert.equal(res.structuredContent?.["limit"], 5);
+  assert.equal(res.structuredContent?.["totalCount"], 500);
+  assert.equal(res.structuredContent?.["truncated"], true);
+});
