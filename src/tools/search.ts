@@ -3,6 +3,11 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { searchSkills } from "../api.js";
 import { errorResult, jsonResult, kindSchema } from "./helpers.js";
 
+/** Default number of results when `limit` is omitted — keeps the response context-safe. */
+export const SEARCH_DEFAULT_LIMIT = 10;
+/** Hard upper bound on `limit`. */
+export const SEARCH_MAX_LIMIT = 50;
+
 export function registerSearchSkills(server: McpServer): void {
   server.registerTool(
     "search_skills",
@@ -18,9 +23,11 @@ export function registerSearchSkills(server: McpServer): void {
           .number()
           .int()
           .positive()
-          .max(50)
+          .max(SEARCH_MAX_LIMIT)
           .optional()
-          .describe("Max results to return (default: registry default)."),
+          .describe(
+            `Max results to return (default: ${SEARCH_DEFAULT_LIMIT}, max: ${SEARCH_MAX_LIMIT}).`,
+          ),
         kind: kindSchema.optional(),
         semantic: z
           .boolean()
@@ -36,8 +43,9 @@ export function registerSearchSkills(server: McpServer): void {
     },
     async ({ query, limit, kind, semantic }) => {
       try {
-        const data = await searchSkills(query, { limit, kind, semantic });
-        return jsonResult({ ...data, count: data.skills?.length ?? 0 });
+        const effectiveLimit = Math.min(limit ?? SEARCH_DEFAULT_LIMIT, SEARCH_MAX_LIMIT);
+        const data = await searchSkills(query, { limit: effectiveLimit, kind, semantic });
+        return jsonResult({ ...data, count: data.skills?.length ?? 0, limit: effectiveLimit });
       } catch (err) {
         return errorResult(err);
       }

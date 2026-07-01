@@ -91,16 +91,30 @@ export interface SkillDetail {
   [key: string]: unknown;
 }
 
-/** GET /api/v1/skills — full public list, optionally filtered by kind/sorted. */
+/**
+ * GET /api/v1/skills — public list, optionally filtered by kind/sorted.
+ *
+ * `limit` is sent to the API (in case it honors a server-side cap) AND enforced
+ * client-side before serializing: an unbounded list would blow up the calling
+ * LLM's context. The response is truncated to `limit` and annotated with
+ * `returnedCount`/`totalCount` so the caller knows N of M are shown.
+ */
 export async function listSkills(opts?: {
   kind?: SkillKind;
   sort?: string;
+  limit?: number;
 }): Promise<ListResponse> {
   const params = new URLSearchParams();
   if (opts?.kind && opts.kind !== "all") params.set("kind", opts.kind);
   if (opts?.sort) params.set("sort", opts.sort);
+  if (opts?.limit != null) params.set("limit", String(opts.limit));
   const qs = params.toString();
-  return request<ListResponse>(`/api/v1/skills${qs ? `?${qs}` : ""}`);
+  const data = await request<ListResponse>(`/api/v1/skills${qs ? `?${qs}` : ""}`);
+  if (opts?.limit != null && Array.isArray(data.skills) && data.skills.length > opts.limit) {
+    const totalCount = data.skills.length;
+    return { ...data, skills: data.skills.slice(0, opts.limit), totalCount, truncated: true };
+  }
+  return data;
 }
 
 /** GET /api/v1/skills/search?q=&semantic= — hybrid semantic + FTS search. */
